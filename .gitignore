@@ -33,6 +33,20 @@ venv/
 ENV/
 env/
 
+# Environment files (sensitive credentials)
+.env
+.env.local
+.env.*
+.envrc
+
+# Backup and temporary editor files
+*.bak
+*.bak_*
+*_original.py
+*~
+*.swp
+*.swo
+
 # Databases and system-specific files
 *.db
 *.sqlite
