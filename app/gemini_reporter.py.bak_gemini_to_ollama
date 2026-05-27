@@ -1,0 +1,275 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+try:
+    from google import genai
+except Exception:
+    genai = None
+
+
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+_MAX_SCAN_ITEMS = 15
+_MAX_NETWORK_ITEMS = 35
+_CACHE: dict[str, str] = {}
+
+
+def _api_key() -> str:
+    return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
+
+
+def gemini_status() -> dict[str, Any]:
+    return {
+        "google_genai_installed": genai is not None,
+        "api_key_configured": bool(_api_key()),
+        "model": GEMINI_MODEL,
+    }
+
+
+def _short(value: Any, limit: int = 500) -> str:
+    text = str(value or "").replace("\x00", "").strip()
+    if len(text) > limit:
+        return text[: limit - 3] + "..."
+    return text
+
+
+def _safe_json(data: Any) -> str:
+    return json.dumps(data, ensure_ascii=False, indent=2, default=str)
+
+
+def _cache_key(kind: str, payload: Any) -> str:
+    raw = kind + "\n" + json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _call_gemini(prompt: str) -> str | None:
+    if genai is None:
+        return None
+    key = _api_key()
+    if not key:
+        return None
+    try:
+        client = genai.Client(api_key=key)
+        response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+        text = getattr(response, "text", "") or ""
+        return text.strip() or None
+    except Exception as exc:
+        return f"Gemini report unavailable. Local explanation is shown instead. Error: {exc}"
+
+
+def _scan_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
+    total = len(results)
+    trusted = sum(1 for r in results if r.get("verdict") == "Clean")
+    review = sum(1 for r in results if r.get("verdict") == "Review needed")
+    high = sum(1 for r in results if r.get("verdict") in {"Malicious", "High risk"})
+    errors = sum(1 for r in results if r.get("verdict") == "Error")
+    quarantined = sum(1 for r in results if r.get("quarantined"))
+
+    top = sorted(results, key=lambda r: int(r.get("risk_score", 0) or 0), reverse=True)[:_MAX_SCAN_ITEMS]
+    files = []
+    for r in top:
+        detections = []
+        for d in (r.get("detections", []) or [])[:8]:
+            detections.append({
+                "engine": d.get("engine") or d.get("detector") or "Scanner",
+                "name": d.get("name", ""),
+                "severity": d.get("severity", 0),
+                "details": _short(d.get("details", ""), 260),
+            })
+        files.append({
+            "name": Path(str(r.get("path", ""))).name,
+            "path": r.get("path", ""),
+            "verdict": r.get("verdict", ""),
+            "trust_label": r.get("trust_label", ""),
+            "risk_score": int(r.get("risk_score", 0) or 0),
+            "quarantined": bool(r.get("quarantined")),
+            "ai_model": r.get("model_engine") or "MalVisor LightGBM",
+            "ai_type": r.get("model_type", ""),
+            "ai_confidence": r.get("model_confidence", 0),
+            "detections": detections,
+        })
+    return {
+        "generated_at_utc": datetime.utcnow().isoformat(timespec="seconds"),
+        "total_files": total,
+        "trusted": trusted,
+        "needs_review": review,
+        "high_risk": high,
+        "errors": errors,
+        "quarantined": quarantined,
+        "top_files": files,
+    }
+
+
+def fallback_scan_report(results: list[dict[str, Any]]) -> str:
+    s = _scan_summary(results)
+    lines = [
+        "AI scan report",
+        "",
+        f"The scan checked {s['total_files']} file(s).",
+        f"Trusted files: {s['trusted']}",
+        f"Files that need review: {s['needs_review']}",
+        f"High-risk files: {s['high_risk']}",
+        f"Errors: {s['errors']}",
+        f"Quarantined: {s['quarantined']}",
+        "",
+    ]
+    risky = [f for f in s["top_files"] if int(f.get("risk_score", 0)) >= 25]
+    if risky:
+        lines.append("Most important items to review:")
+        for f in risky[:8]:
+            reason = "No specific reason available"
+            if f.get("detections"):
+                d = f["detections"][0]
+                reason = f"{d.get('engine')} detected {d.get('name')}"
+            lines.append(f"- {f['name']} — {f.get('trust_label') or f.get('verdict')} — {reason}.")
+        lines.append("")
+    if s["high_risk"]:
+        lines.append("Recommended action: keep quarantine enabled and do not open high-risk files until reviewed.")
+    elif s["needs_review"]:
+        lines.append("Recommended action: review the listed files. Some detections may be false positives, especially security tools or scripts.")
+    else:
+        lines.append("No high-risk files were found. Continue to keep real-time protection enabled.")
+    return "\n".join(lines)
+
+
+def generate_scan_ai_report(results: list[dict[str, Any]]) -> str:
+    payload = _scan_summary(results)
+    key = _cache_key("scan", payload)
+    if key in _CACHE:
+        return _CACHE[key]
+
+    local = fallback_scan_report(results)
+    prompt = f"""
+You are an endpoint security assistant inside a defensive antivirus desktop app.
+Write a clear, short, non-technical scan report for a normal user.
+
+Rules:
+- Do not invent detections.
+- Do not provide malware creation or evasion advice.
+- Explain what the result means in simple language.
+- Mention high-risk files and quarantine status.
+- If files are the antivirus project's own source code or security rules, warn that these can be false positives.
+- Give practical next steps.
+- Do not output JSON.
+
+Scan data:
+{_safe_json(payload)}
+"""
+    text = _call_gemini(prompt)
+    if not text:
+        text = local
+    elif text.startswith("Gemini report unavailable"):
+        text = local + "\n\n" + text
+    _CACHE[key] = text
+    return text
+
+
+def _network_payload(result: dict[str, Any]) -> dict[str, Any]:
+    connections = result.get("connections", []) or []
+    findings = result.get("findings", []) or []
+    established_external = 0
+    listening = 0
+    by_process: dict[str, int] = {}
+    compact_connections = []
+    for c in connections[:_MAX_NETWORK_ITEMS]:
+        process = c.get("process") or "Unknown process"
+        by_process[process] = by_process.get(process, 0) + 1
+        if str(c.get("status", "")).upper() == "ESTABLISHED" and c.get("remote"):
+            established_external += 1
+        if str(c.get("status", "")).upper() == "LISTEN":
+            listening += 1
+        compact_connections.append({
+            "protocol": c.get("protocol", ""),
+            "status": c.get("status", ""),
+            "process": process,
+            "pid": c.get("pid", ""),
+            "local": c.get("local", ""),
+            "remote": c.get("remote", ""),
+            "path": _short(c.get("path", ""), 220),
+        })
+    compact_findings = []
+    for f in findings[:_MAX_NETWORK_ITEMS]:
+        compact_findings.append({
+            "title": f.get("title", ""),
+            "severity": f.get("severity", 0),
+            "details": _short(f.get("details", ""), 380),
+            "path": _short(f.get("path", ""), 220),
+        })
+    cicids = result.get("cicids_ai", {}) or {}
+    return {
+        "generated_at_utc": datetime.utcnow().isoformat(timespec="seconds"),
+        "connection_count": len(connections),
+        "finding_count": len(findings),
+        "established_external_count": established_external,
+        "listening_count": listening,
+        "top_processes": sorted(by_process.items(), key=lambda x: x[1], reverse=True)[:10],
+        "sample_connections": compact_connections,
+        "findings": compact_findings,
+        "optional_cicids_ai": {
+            "ran": bool(cicids.get("ran")),
+            "status": cicids.get("status", "not_configured"),
+            "summary": _short(cicids.get("summary", ""), 500),
+        },
+    }
+
+
+def fallback_network_report(result: dict[str, Any]) -> str:
+    p = _network_payload(result)
+    lines = [
+        "AI network report",
+        "",
+        f"Connections found: {p['connection_count']}",
+        f"Findings to review: {p['finding_count']}",
+        f"Active external connections: {p['established_external_count']}",
+        f"Listening ports: {p['listening_count']}",
+        "",
+    ]
+    cicids = p.get("optional_cicids_ai", {}) or {}
+    if cicids:
+        lines.append(f"Optional network AI: {'ran' if cicids.get('ran') else 'not run'} — {cicids.get('summary', '')}")
+        lines.append("")
+
+    if p["findings"]:
+        lines.append("Network items to review:")
+        for f in p["findings"][:8]:
+            lines.append(f"- {f.get('title')} ({f.get('severity')}/100): {f.get('details')}")
+        lines.append("")
+        lines.append("Recommended action: verify the listed processes. Close unknown applications and run a file scan on suspicious process paths.")
+    else:
+        lines.append("No risky network connection was detected by the local checks.")
+    return "\n".join(lines)
+
+
+def generate_network_ai_report(result: dict[str, Any]) -> str:
+    payload = _network_payload(result)
+    key = _cache_key("network", payload)
+    if key in _CACHE:
+        return _CACHE[key]
+    local = fallback_network_report(result)
+    prompt = f"""
+You are an endpoint security assistant inside a defensive antivirus desktop app.
+Write a clear network audit report for a normal user.
+
+Rules:
+- Do not output JSON.
+- Do not invent remote IP reputation.
+- Explain whether the network activity looks normal or needs review.
+- Mention active external connections, listening ports, and suspicious ports if present.
+- If optional CICIDS/network AI did not run, explain that flow extraction is required before using that AI.
+- Recommend safe defensive actions only.
+
+Network audit data:
+{_safe_json(payload)}
+"""
+    text = _call_gemini(prompt)
+    if not text:
+        text = local
+    elif text.startswith("Gemini report unavailable"):
+        text = local + "\n\n" + text
+    _CACHE[key] = text
+    return text

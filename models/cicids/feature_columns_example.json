@@ -1,0 +1,10 @@
+[
+  "connection_count",
+  "established_count",
+  "listening_count",
+  "external_connection_count",
+  "unique_remote_ip_count",
+  "unique_remote_port_count",
+  "suspicious_port_count",
+  "process_count"
+]

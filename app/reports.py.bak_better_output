@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+from datetime import datetime
+from html import escape
+from pathlib import Path
+from typing import Any
+
+from .config import REPORTS_DIR
+from .gemini_reporter import generate_scan_ai_report
+
+try:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+except Exception:
+    A4 = None
+    canvas = None
+
+
+def summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "total": len(results),
+        "clean": sum(1 for r in results if r.get("verdict") == "Clean"),
+        "review": sum(1 for r in results if r.get("verdict") == "Review needed"),
+        "malicious": sum(1 for r in results if r.get("verdict") in {"Malicious", "High risk"}),
+        "errors": sum(1 for r in results if r.get("verdict") == "Error"),
+        "quarantined": sum(1 for r in results if r.get("quarantined")),
+    }
+
+
+def generate_plain_explanation(results: list[dict[str, Any]]) -> str:
+    return generate_scan_ai_report(results)
+
+
+def generate_html_report(results: list[dict[str, Any]]) -> str:
+    REPORTS_DIR.mkdir(exist_ok=True)
+    stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    path = REPORTS_DIR / f"scan_report_{stamp}.html"
+    summary = summarize_results(results)
+    ai_report = generate_scan_ai_report(results)
+    rows = []
+    for r in results:
+        rows.append(
+            f"<tr><td>{escape(Path(r.get('path','')).name)}</td><td>{escape(r.get('verdict',''))}</td><td>{int(r.get('risk_score',0))}/100</td><td>{escape(r.get('model_type',''))}</td><td>{escape(r.get('path',''))}</td></tr>"
+        )
+    html = f"""<!doctype html><html><head><meta charset='utf-8'><title>AntiShield Gemini Scan Report</title>
+<style>
+body{{font-family:Segoe UI,Arial;background:#f5f7fb;color:#1f2937;margin:0}}
+.page{{max-width:1200px;margin:auto;padding:32px}}
+.hero{{background:#fff;border-radius:16px;padding:24px;box-shadow:0 6px 24px #0001}}
+.cards{{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:20px 0}}
+.card{{background:white;border-radius:14px;padding:16px;box-shadow:0 4px 16px #0001}}
+table{{width:100%;border-collapse:collapse;background:#fff;border-radius:14px;overflow:hidden}}
+th{{background:#0f6cbd;color:white;text-align:left;padding:10px}}
+td{{border-bottom:1px solid #eee;padding:10px;vertical-align:top}}
+pre{{white-space:pre-wrap;font-family:Segoe UI,Arial;line-height:1.45}}
+.muted{{color:#667085}}
+</style></head><body><div class='page'>
+<div class='hero'><h1>AntiShield AI scan report</h1><p class='muted'>{datetime.utcnow().isoformat(timespec='seconds')} UTC</p><pre>{escape(ai_report)}</pre></div>
+<div class='cards'><div class='card'><b>Total</b><h2>{summary['total']}</h2></div><div class='card'><b>Trusted</b><h2>{summary['clean']}</h2></div><div class='card'><b>Review</b><h2>{summary['review']}</h2></div><div class='card'><b>High risk</b><h2>{summary['malicious']}</h2></div><div class='card'><b>Quarantine</b><h2>{summary['quarantined']}</h2></div></div>
+<table><thead><tr><th>File</th><th>Verdict</th><th>Risk</th><th>AI result</th><th>Path</th></tr></thead><tbody>{''.join(rows)}</tbody></table>
+</div></body></html>"""
+    path.write_text(html, encoding="utf-8")
+    return str(path)
+
+
+def generate_pdf_report(results: list[dict[str, Any]]) -> str:
+    if canvas is None or A4 is None:
+        return ""
+    REPORTS_DIR.mkdir(exist_ok=True)
+    stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    path = REPORTS_DIR / f"scan_report_{stamp}.pdf"
+    c = canvas.Canvas(str(path), pagesize=A4)
+    width, height = A4
+    y = height - 50
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(40, y, "AntiShield AI scan report")
+    y -= 30
+    c.setFont("Helvetica", 10)
+    for line in generate_scan_ai_report(results).splitlines():
+        if y < 50:
+            c.showPage(); y = height - 50; c.setFont("Helvetica", 10)
+        c.drawString(40, y, line[:120])
+        y -= 15
+    c.save()
+    return str(path)
