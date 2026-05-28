@@ -1,6 +1,6 @@
-# 🛡️ WHealth — AntiShield Pro Defender
+# 🛡️ WHealth — Windows Defender
 
-WHealth (AntiShield Pro Defender) is a modern, premium desktop security audit and analysis application built with **PySide6**. 
+WHealth (Windows Health ) is a modern, premium desktop security audit and analysis application built with **PySide6**. 
 
 By combining traditional signature-based detection with local Machine Learning (LightGBM) and local Large Language Models (Ollama), WHealth offers a comprehensive security workspace entirely on the desktop.
 
