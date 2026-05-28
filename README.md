@@ -1,6 +1,6 @@
 # 🛡️ WHealth — AntiShield Pro Defender
 
-WHealth (AntiShield Pro Defender) is a modern, premium desktop security audit and analysis application built with **PySide6**. It is designed as an educational, defensive dashboard that provides deep, local insights into system security, file safety, and network activities.
+WHealth (AntiShield Pro Defender) is a modern, premium desktop security audit and analysis application built with **PySide6**. 
 
 By combining traditional signature-based detection with local Machine Learning (LightGBM) and local Large Language Models (Ollama), WHealth offers a comprehensive security workspace entirely on the desktop.
 
@@ -70,12 +70,7 @@ Provides real-time local network endpoint monitoring and traffic pattern evaluat
     python -m pip install -r requirements.txt
     ```
 
-4.  **Download the MalVisor ML model:**
-    ```powershell
-    .\download_malvisor_model.ps1
-    ```
-
-5.  **Run the application:**
+4.  **Run the application:**
     ```powershell
     python desktop_app.py
     ```
@@ -95,6 +90,4 @@ To enable the automatic generation of plain-language security reports:
 ---
 
 ## ⚠️ Disclaimer & Security Note
-*   **Educational Use:** This application is designed solely for educational and defensive auditing purposes.
 *   **No File Execution:** WHealth **never** executes files during scanning; all analyses are static, rule-based, or model-based.
-*   **Model Security Warning:** `.pkl` files (Pickle serialized models) can execute arbitrary code upon loading. Ensure you only load model files generated from trusted sources or downloaded via the official workspace scripts.
