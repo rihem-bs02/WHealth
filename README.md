@@ -1,7 +1,15 @@
-# 🛡️ WHealth 
+# 🛡️ WHealth  
 Windows Defender
 
-WHealth (Windows Health ) is a modern, premium desktop security audit and analysis application built with **PySide6**. 
+<p align="center">
+  <img src="assets/whealth-dashboard.png" alt="WHealth desktop security dashboard" width="800">
+</p>
+
+<p align="center">
+  <em>WHealth — a modern desktop security audit and analysis workspace.</em>
+</p>
+
+WHealth (Windows Health) is a modern, premium desktop security audit and analysis application built with **PySide6**. 
 
 By combining traditional signature-based detection with local Machine Learning (LightGBM) and local Large Language Models (Ollama), WHealth offers a comprehensive security workspace entirely on the desktop.
 
