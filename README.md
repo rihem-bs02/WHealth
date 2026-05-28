@@ -6,7 +6,7 @@ Windows Defender
 </p>
 
 <p align="center">
-  <em>WHealth — a modern desktop security audit and analysis workspace.</em>
+  <em>WHealth a modern desktop security audit and analysis workspace.</em>
 </p>
 
 WHealth (Windows Health) is a modern, premium desktop security audit and analysis application built with **PySide6**. 
