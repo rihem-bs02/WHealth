@@ -2,7 +2,7 @@
 Windows Defender
 
 <p align="center">
-  <img src="dashboard.png" alt="WHealth desktop security dashboard" width="800">
+  <img src="dash.png" alt="WHealth desktop security dashboard" width="800">
 </p>
 
 <p align="center">
